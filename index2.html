@@ -1,0 +1,415 @@
+<!DOCTYPE html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Сопоставление списков по суммам</title>
+    <style>
+      :root {
+        --bg-color: #ffffff;
+        --text-color: #000000;
+        --header-bg: #f4f4f4;
+        --border-color: #ccc;
+      }
+      .dark {
+        --bg-color: #1e1e1e;
+        --text-color: #e0e0e0;
+        --header-bg: #333333;
+        --border-color: #555555;
+      }
+      body {
+        font-family: Arial, sans-serif;
+        padding: 20px;
+        max-width: 800px;
+        margin: auto;
+        background: var(--bg-color);
+        color: var(--text-color);
+      }
+      .input-block {
+        margin-bottom: 20px;
+      }
+      textarea {
+        width: 100%;
+        height: 100px;
+        font-family: monospace;
+        margin-top: 5px;
+        background: var(--bg-color);
+        color: var(--text-color);
+        border: 1px solid var(--border-color);
+      }
+      button,
+      .color-btn,
+      .hide-btn {
+        padding: 5px 10px;
+        font-size: 14px;
+        cursor: pointer;
+        margin-right: 5px;
+        background: var(--header-bg);
+        color: var(--text-color);
+        border: 1px solid var(--border-color);
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 20px;
+        background: var(--bg-color);
+      }
+      th,
+      td {
+        border: 1px solid var(--border-color);
+        padding: 8px;
+        text-align: left;
+      }
+      th {
+        background: var(--header-bg);
+      }
+      .hidden-text td {
+        color: transparent;
+      }
+      .dragging {
+        opacity: 0.5;
+      }
+      .drag-over {
+        outline: 2px dashed #007bff;
+      }
+      .auto-red td:nth-child(4),
+      .auto-red td:nth-child(5) {
+        background-color: rgba(255, 0, 0, 0.2);
+      }
+      .manual-highlight td:nth-child(3) {
+        background-color: rgba(255, 0, 0, 0.2);
+      }
+      .selected {
+        outline: 2px solid #007bff;
+      }
+      #focusBox {
+        position: absolute;
+        background: var(--bg-color);
+        pointer-events: none;
+        display: none;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Сопоставление списков по суммам</h1>
+
+    <div class="input-block">
+      <label>Первый список наименований (по одному на строке):</label>
+      <textarea id="namesList" placeholder="Наименование"></textarea>
+    </div>
+
+    <div class="input-block">
+      <label>Первый список сумм (формат 49 333,00):</label>
+      <textarea id="firstSumsList" placeholder="27 240,00"></textarea>
+    </div>
+
+    <div class="input-block">
+      <label>Второй список сумм (формат 27 240,01):</label>
+      <textarea id="secondSumsList" placeholder="27 240,01"></textarea>
+    </div>
+
+    <button id="processBtn">Сопоставить и отсортировать</button>
+    <button id="toggleFocusBtn">🔍 Фокус</button>
+    <button id="toggleThemeBtn">🌙 Темный режим</button>
+
+    <div id="output"></div>
+    <div id="focusBox"></div>
+
+    <script>
+      /* ----------  ТЕМНАЯ ТЕМА ---------- */
+      function setTheme(dark) {
+        document.documentElement.classList.toggle("dark", dark);
+        localStorage.setItem("darkMode", dark);
+        document.getElementById("toggleThemeBtn").textContent = dark
+          ? "☀️ Светлый режим"
+          : "🌙 Темный режим";
+      }
+      document
+        .getElementById("toggleThemeBtn")
+        .addEventListener("click", () => {
+          const isDark = document.documentElement.classList.contains("dark");
+          setTheme(!isDark);
+        });
+      window.addEventListener("load", () => {
+        setTheme(localStorage.getItem("darkMode") === "true");
+      });
+
+      /* ----------  ПАРСИНГ СУММ ---------- */
+      function parseSum(str) {
+        const noSpaces = str.replace(/\s/g, "");
+        const cleanedThousands = noSpaces.replace(/,(?=.*?,)/g, "");
+        const normalized = cleanedThousands.replace(",", ".");
+        return parseFloat(normalized);
+      }
+
+      /* ----------  ОТРИСОВКА ТАБЛИЦЫ ---------- */
+      function renderTable(data) {
+        const out = document.getElementById("output");
+        if (!data.length) {
+          out.innerHTML = "<p>Нет данных для отображения.</p>";
+          return;
+        }
+
+        let html = `
+          <table>
+            <thead>
+              <tr>
+                <th style="width:30px">#</th>
+                <th style="width:30px"></th>
+                <th>Наименование</th>
+                <th style="width:120px">Исходная сумма</th>
+                <th style="width:120px">Сопоставленная сумма</th>
+                <th style="width:30px"></th>
+              </tr>
+            </thead>
+            <tbody>`;
+
+        data.forEach((item, idx) => {
+          const autoCls = item.autoRed ? "auto-red" : "";
+          const manualCls = item.manual ? "manual-highlight" : "";
+          html += `
+            <tr draggable="true"
+                class="${autoCls} ${manualCls}"
+                data-hidden="${item.hidden}"
+                data-auto-red="${item.autoRed}"
+                data-manual="${item.manual}">
+              <td>${idx + 1}</td>
+              <td><button class="hide-btn">▶</button></td>
+              <td>${item.name}</td>
+              <td contenteditable="true" class="edit-sum" data-col="orig">${item.originalSum
+                .toLocaleString("ru-RU")
+                .replace(/\s/g, " ")}</td>
+              <td contenteditable="true" class="edit-sum" data-col="match">${item.matchedTo
+                .toLocaleString("ru-RU")
+                .replace(/\s/g, " ")}</td>
+              <td><button class="color-btn">🔴</button></td>
+            </tr>`;
+        });
+
+        html += `</tbody></table>`;
+        out.innerHTML = html;
+        attachRowHandlers();
+        attachInlineEdit();
+      }
+
+      /* ----------  ОБРАБОТЧИКИ СТРОК ---------- */
+      function attachRowHandlers() {
+        const rows = document.querySelectorAll("tbody tr");
+        rows.forEach((row) => {
+          if (row.dataset.hidden === "true") {
+            row.classList.add("hidden-text");
+          }
+
+          row.querySelector(".hide-btn").addEventListener("click", (e) => {
+            e.stopPropagation();
+            row.classList.toggle("hidden-text");
+            saveState();
+          });
+
+          row.querySelector(".color-btn").addEventListener("click", (e) => {
+            e.stopPropagation();
+            row.classList.toggle("manual-highlight");
+            saveState();
+          });
+
+          row.addEventListener("click", () => {
+            rows.forEach((r) => r.classList.remove("selected"));
+            row.classList.add("selected");
+          });
+
+          /* drag & drop */
+          row.addEventListener("dragstart", (e) => {
+            row.classList.add("dragging");
+            e.dataTransfer.effectAllowed = "move";
+            e.dataTransfer.setData("text/plain", Array.from(rows).indexOf(row));
+          });
+          row.addEventListener("dragend", () => {
+            row.classList.remove("dragging");
+            rows.forEach((r) => r.classList.remove("drag-over"));
+            saveState();
+          });
+          row.addEventListener("dragover", (e) => {
+            e.preventDefault();
+            if (!row.classList.contains("dragging"))
+              row.classList.add("drag-over");
+          });
+          row.addEventListener("dragleave", () => {
+            row.classList.remove("drag-over");
+          });
+          row.addEventListener("drop", (e) => {
+            e.preventDefault();
+            const srcIdx = parseInt(e.dataTransfer.getData("text/plain"), 10);
+            const destIdx = Array.from(rows).indexOf(row);
+            if (srcIdx !== destIdx) {
+              const tbody = row.parentNode;
+              const srcRow = rows[srcIdx];
+              const refNode = srcIdx < destIdx ? row.nextSibling : row;
+              tbody.insertBefore(srcRow, refNode);
+              Array.from(tbody.children).forEach(
+                (r, i) => (r.children[0].textContent = i + 1)
+              );
+            }
+            rows.forEach((r) => r.classList.remove("drag-over"));
+            saveState();
+          });
+        });
+      }
+
+      /* ----------  РЕДАКТИРОВАНИЕ ЯЧЕЕК ---------- */
+      function attachInlineEdit() {
+        document.querySelectorAll(".edit-sum").forEach((cell) => {
+          cell.addEventListener("blur", finishEdit);
+          cell.addEventListener("keydown", (e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              finishEdit.call(cell);
+            }
+          });
+        });
+
+        function finishEdit() {
+          const row = this.parentElement;
+          const rows = document.querySelectorAll("tbody tr");
+          const idx = Array.from(rows).indexOf(row);
+
+          const state = JSON.parse(localStorage.getItem("tableState") || "[]");
+          if (!state[idx]) return;
+
+          const raw = this.textContent.trim();
+          const val = parseSum(raw);
+          if (isNaN(val)) {
+            alert("Неверный формат числа");
+            this.textContent =
+              this.dataset.col === "orig"
+                ? state[idx].originalSum.toLocaleString("ru-RU")
+                : state[idx].matchedTo.toLocaleString("ru-RU");
+            return;
+          }
+
+          if (this.dataset.col === "orig") {
+            state[idx].originalSum = val;
+          } else {
+            state[idx].matchedTo = val;
+          }
+
+          state[idx].autoRed = state[idx].originalSum !== state[idx].matchedTo;
+          localStorage.setItem("tableState", JSON.stringify(state));
+          renderTable(state);
+        }
+      }
+
+      /* ----------  СОХРАНЕНИЕ СОСТОЯНИЯ ---------- */
+      function saveState() {
+        const rows = document.querySelectorAll("tbody tr");
+        const state = Array.from(rows).map((r) => ({
+          name: r.children[2].textContent,
+          originalSum: parseSum(r.children[3].textContent),
+          matchedTo: parseSum(r.children[4].textContent),
+          hidden: r.classList.contains("hidden-text"),
+          autoRed: r.classList.contains("auto-red"),
+          manual: r.classList.contains("manual-highlight"),
+        }));
+        localStorage.setItem("tableState", JSON.stringify(state));
+      }
+
+      /* ----------  ФОКУС-БОКС ---------- */
+      let focusActive = false;
+      const focusBtn = document.getElementById("toggleFocusBtn");
+      const focusBox = document.getElementById("focusBox");
+
+      function onMouseMove(e) {
+        focusBox.style.width = window.innerWidth + "px";
+        focusBox.style.height = "400px";
+        focusBox.style.left = "0px";
+        focusBox.style.top = e.pageY + 10 + "px";
+      }
+
+      focusBtn.addEventListener("click", () => {
+        focusActive = !focusActive;
+        if (focusActive) {
+          focusBox.style.display = "block";
+          document.addEventListener("mousemove", onMouseMove);
+          focusBtn.textContent = "✖ Скрыть фокус";
+        } else {
+          focusBox.style.display = "none";
+          document.removeEventListener("mousemove", onMouseMove);
+          focusBtn.textContent = "🔍 Фокус";
+        }
+      });
+
+      /* ----------  ЗАГРУЗКА СОСТОЯНИЯ ---------- */
+      window.addEventListener("load", () => {
+        const saved = localStorage.getItem("tableState");
+        if (saved) renderTable(JSON.parse(saved));
+      });
+
+      /* ----------  ОБРАБОТКА КНОПКИ «Сопоставить» ---------- */
+      document.getElementById("processBtn").addEventListener("click", () => {
+        const names = document
+          .getElementById("namesList")
+          .value.split("\n")
+          .map((l) => l.trim())
+          .filter(Boolean);
+        const firstSums = document
+          .getElementById("firstSumsList")
+          .value.split("\n")
+          .map((l) => l.trim())
+          .filter(Boolean);
+        const secondSums = document
+          .getElementById("secondSumsList")
+          .value.split("\n")
+          .map((l) => l.trim())
+          .filter(Boolean);
+
+        if (names.length !== firstSums.length) {
+          alert("Число наименований и чисел в первом списке должно совпадать.");
+          return;
+        }
+
+        const firstList = names.map((name, i) => ({
+          name,
+          sum: parseSum(firstSums[i]),
+        }));
+        const secondList = secondSums.map(parseSum);
+
+        const pairs = [];
+        firstList.forEach((item, i) =>
+          secondList.forEach((t, j) =>
+            pairs.push({ i, j, diff: Math.abs(item.sum - t) })
+          )
+        );
+        pairs.sort((a, b) => a.diff - b.diff);
+
+        const usedI = new Set();
+        const usedJ = new Set();
+        const assignments = [];
+        for (const { i, j } of pairs) {
+          if (!usedI.has(i) && !usedJ.has(j)) {
+            usedI.add(i);
+            usedJ.add(j);
+            assignments.push({ i, j });
+          }
+          if (
+            assignments.length >= Math.min(firstList.length, secondList.length)
+          )
+            break;
+        }
+
+        const result = assignments
+          .map(({ i, j }) => ({
+            name: firstList[i].name,
+            originalSum: firstList[i].sum,
+            matchedTo: secondList[j],
+            hidden: false,
+            autoRed: firstList[i].sum !== secondList[j],
+          }))
+          .sort(
+            (a, b) =>
+              secondList.indexOf(a.matchedTo) - secondList.indexOf(b.matchedTo)
+          );
+
+        renderTable(result);
+        saveState();
+      });
+    </script>
+  </body>
+</html>
